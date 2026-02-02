@@ -13,6 +13,51 @@ from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
 import warnings
 warnings.filterwarnings('ignore')
 
+# Dictionary saham Indonesia populer
+STOCK_DICT = {
+    'BBCA': 'PT Bank Central Asia Tbk',
+    'BBRI': 'PT Bank Rakyat Indonesia Tbk',
+    'BMRI': 'PT Bank Mandiri Tbk',
+    'BBNI': 'PT Bank Negara Indonesia Tbk',
+    'TLKM': 'PT Telkom Indonesia Tbk',
+    'ASII': 'PT Astra International Tbk',
+    'UNVR': 'PT Unilever Indonesia Tbk',
+    'ICBP': 'PT Indofood CBP Sukses Makmur Tbk',
+    'INDF': 'PT Indofood Sukses Makmur Tbk',
+    'KLBF': 'PT Kalbe Farma Tbk',
+    'GGRM': 'PT Gudang Garam Tbk',
+    'HMSP': 'PT HM Sampoerna Tbk',
+    'SMGR': 'PT Semen Indonesia Tbk',
+    'PGAS': 'PT Perusahaan Gas Negara Tbk',
+    'PTBA': 'PT Bukit Asam Tbk',
+    'ADRO': 'PT Adaro Energy Tbk',
+    'ANTM': 'PT Aneka Tambang Tbk',
+    'INCO': 'PT Vale Indonesia Tbk',
+    'JSMR': 'PT Jasa Marga Tbk',
+    'EXCL': 'PT XL Axiata Tbk',
+    'WIKA': 'PT Wijaya Karya Tbk',
+    'WSKT': 'PT Waskita Karya Tbk',
+    'PTPP': 'PT PP (Persero) Tbk',
+    'AKRA': 'PT AKR Corporindo Tbk',
+    'UNTR': 'PT United Tractors Tbk',
+    'SCMA': 'PT Surya Citra Media Tbk',
+    'MNCN': 'PT Media Nusantara Citra Tbk',
+    'LPPF': 'PT Matahari Department Store Tbk',
+    'ERAA': 'PT Erajaya Swasembada Tbk',
+    'ACES': 'PT Ace Hardware Indonesia Tbk'
+}
+
+def get_stock_suggestions(query):
+    """Cari suggestion berdasarkan input user"""
+    if not query:
+        return []
+    query = query.upper()
+    suggestions = []
+    for code, name in STOCK_DICT.items():
+        if query in code or query in name.upper():
+            suggestions.append(f"{name} ({code})")
+    return suggestions[:5]  # Max 5 suggestions
+
 # Konfigurasi halaman
 st.set_page_config(page_title="Prediksi Saham Indonesia", layout="wide", initial_sidebar_state="expanded")
 
@@ -242,7 +287,15 @@ with st.sidebar:
     st.header("⚙️ Konfigurasi")
     
     ticker = st.text_input("Kode Saham (tanpa .JK)", "BBCA", help="Contoh: BBCA, BBRI, TLKM")
-    ticker = ticker.upper()
+    ticker = ticker.upper().strip()
+    
+    # Tampilkan suggestions
+    if ticker:
+        suggestions = get_stock_suggestions(ticker)
+        if suggestions:
+            st.markdown("**💡 Saran Saham:**")
+            for suggestion in suggestions:
+                st.caption(suggestion)
     
     forecast_days = st.slider("Jumlah Hari Prediksi", 1, 30, 7)
     
@@ -261,8 +314,9 @@ if st.button("🔍 MULAI PREDIKSI", type="primary", use_container_width=True):
         # Informasi saham terkini
         col1, col2, col3, col4 = st.columns(4)
         
-        current_price = data['Close'].iloc[-1]
-        prev_price = data['Close'].iloc[-2]
+        # Konversi ke float untuk menghindari error
+        current_price = float(data['Close'].iloc[-1])
+        prev_price = float(data['Close'].iloc[-2])
         change = current_price - prev_price
         change_pct = (change / prev_price) * 100
         
