@@ -374,33 +374,24 @@ def train_and_predict_models(X, y, scaler, last_sequence, forecast_days=7):
                 model.fit(X_train, y_train)
                 trained_models[name] = model
                 
-                # Evaluasi pada test set dengan multiple metrics
+                # Evaluasi pada test set dengan R² Score (murni tanpa bonus)
                 y_pred_test = model.predict(X_test)
                 
                 # Hitung R² score (coefficient of determination)
+                # R² = 1 - (sum of squared residuals / total sum of squares)
+                # Range: -∞ to 1.0, dimana 1.0 = prediksi sempurna
                 from sklearn.metrics import r2_score
                 r2 = r2_score(y_test, y_pred_test)
                 
-                # Hitung MAPE (Mean Absolute Percentage Error)
-                # Hindari division by zero
-                non_zero_mask = y_test != 0
-                if non_zero_mask.sum() > 0:
-                    mape = mean_absolute_percentage_error(y_test[non_zero_mask], y_pred_test[non_zero_mask]) * 100
+                # Konversi R² ke persentase akurasi
+                # R² negatif berarti model lebih buruk dari baseline
+                if r2 < 0:
+                    accuracy = 0.0
                 else:
-                    mape = 50.0  # Default jika semua nilai 0
+                    accuracy = r2 * 100
                 
-                # Hitung RMSE
-                rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
-                
-                # Kombinasi metrik untuk akurasi yang lebih baik
-                # R² score (0-1) dikali 100 untuk persentase
-                # Plus bonus dari low MAPE
-                base_accuracy = max(0, r2 * 100)
-                mape_bonus = max(0, (100 - mape) * 0.3)  # Bonus dari low MAPE
-                
-                # Total accuracy dengan cap
-                accuracy = min(base_accuracy + mape_bonus, 99.5)
-                accuracy = max(accuracy, 70)  # Minimal 70% untuk tampilan
+                # Cap maksimal di 99% (tidak mungkin 100% sempurna di real market)
+                accuracy = min(accuracy, 99.0)
                 
                 accuracies[name] = accuracy
                 
@@ -436,7 +427,7 @@ def train_and_predict_models(X, y, scaler, last_sequence, forecast_days=7):
             except Exception as e:
                 st.warning(f"Model {name} gagal: {str(e)}")
                 # Set default values jika model gagal
-                accuracies[name] = 70.0
+                accuracies[name] = 50.0  # Realistis: 50% seperti coin flip
                 # Prediksi flat (harga terakhir)
                 last_price = scaler.inverse_transform([[last_sequence[59]]])[0][0]
                 predictions[name] = np.array([last_price] * forecast_days)
@@ -472,7 +463,7 @@ def train_and_predict_models(X, y, scaler, last_sequence, forecast_days=7):
                                                            for name, acc in accuracies.items() 
                                                            if name in ensemble_weights)
         else:
-            accuracies['Ensemble Weighted Average'] = 70.0
+            accuracies['Ensemble Weighted Average'] = 50.0  # Coin flip baseline
         
         return predictions, accuracies
         
@@ -526,7 +517,10 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### 📊 Info:")
-    st.info("Program ini menggunakan 5 model ML untuk prediksi harga saham dengan akurasi optimal")
+    st.info("Program ini menggunakan 5 model ML untuk prediksi harga saham dengan R² Score murni")
+    
+    st.markdown("### ⚠️ Disclaimer:")
+    st.error("Prediksi ≠ Jaminan profit. Pasar saham sangat volatile dan unpredictable. Investasi dengan bijak!")
 
 # Main content
 if st.button("🔍 MULAI PREDIKSI", type="primary", use_container_width=True):
@@ -535,6 +529,10 @@ if st.button("🔍 MULAI PREDIKSI", type="primary", use_container_width=True):
     
     if data is not None and not data.empty:
         st.success(f"✅ Data {ticker} berhasil diunduh!")
+        
+        # Warning di awal
+        st.warning("⚠️ **Perhatian**: Ini adalah prediksi berbasis ML untuk edukasi. "
+                   "Jangan gunakan sebagai satu-satunya dasar keputusan trading/investasi Anda!")
         
         # Informasi saham terkini
         col1, col2, col3, col4 = st.columns(4)
@@ -759,6 +757,11 @@ if st.button("🔍 MULAI PREDIKSI", type="primary", use_container_width=True):
         # Summary per model
         st.subheader("📊 Ringkasan Prediksi per Model")
         
+        st.warning("⚠️ **PENTING - Baca Ini:** Akurasi menggunakan R² Score yang diukur dari data historis. "
+                   "**Akurasi tinggi pada data lama TIDAK menjamin akurasi di masa depan.** "
+                   "Pasar saham dipengaruhi banyak faktor eksternal (berita, sentimen, ekonomi makro) yang tidak bisa diprediksi oleh model. "
+                   "Gunakan ini hanya sebagai **referensi tambahan**, bukan satu-satunya dasar investasi.")
+        
         summary_data = []
         for model_name in sorted(accuracies.keys(), key=lambda x: accuracies[x], reverse=True):
             forecast = predictions[model_name]
@@ -822,6 +825,10 @@ if st.button("🔍 MULAI PREDIKSI", type="primary", use_container_width=True):
         # Analisis Trend
         st.subheader("🔍 Analisis Trend Konsensus")
         
+        st.info("💡 **Catatan**: Trend prediksi ini berdasarkan pola historis. "
+                "Faktor fundamental (laporan keuangan, berita perusahaan, kondisi ekonomi) "
+                "sangat mempengaruhi harga dan tidak termasuk dalam model ini.")
+        
         # Ambil model dengan akurasi tertinggi
         best_model = max(accuracies, key=accuracies.get)
         best_forecast = predictions[best_model]
@@ -854,8 +861,16 @@ if st.button("🔍 MULAI PREDIKSI", type="primary", use_container_width=True):
 # Footer
 st.markdown("---")
 st.markdown("""
-<div style='text-align: center; color: #666;'>
-    <p>⚠️ <strong>Disclaimer:</strong> Prediksi ini hanya untuk tujuan edukasi dan riset. 
-    Tidak merupakan saran investasi. Selalu lakukan riset sendiri sebelum berinvestasi.</p>
+<div style='text-align: center; color: #666; background-color: #fff3cd; padding: 20px; border-radius: 10px; border: 2px solid #ffc107;'>
+    <h3 style='color: #856404; margin-top: 0;'>⚠️ DISCLAIMER PENTING</h3>
+    <p style='color: #856404; font-size: 1.1em; margin: 10px 0;'><strong>Prediksi ini BUKAN saran investasi!</strong></p>
+    <p style='color: #856404;'>
+    • Model ML hanya belajar dari pola historis, tidak bisa memprediksi kejadian mendadak (black swan events)<br>
+    • Akurasi tinggi di backtest ≠ profit di masa depan<br>
+    • Pasar saham sangat volatile dan dipengaruhi sentimen, berita, kebijakan yang tidak bisa diprediksi<br>
+    • <strong>SELALU lakukan riset sendiri dan konsultasi dengan financial advisor</strong><br>
+    • <strong>Jangan investasi dengan uang yang tidak siap Anda kehilangan</strong>
+    </p>
+    <p style='color: #856404; margin-bottom: 0;'><em>Gunakan tool ini hanya untuk edukasi dan research, bukan untuk trading decision.</em></p>
 </div>
 """, unsafe_allow_html=True)
