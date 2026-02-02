@@ -93,6 +93,24 @@ def get_stock_data(ticker, period="2y"):
         stock = yf.download(ticker_symbol, period=period, progress=False)
         if stock.empty:
             return None
+        
+        # Flatten columns jika MultiIndex
+        if isinstance(stock.columns, pd.MultiIndex):
+            stock.columns = stock.columns.get_level_values(0)
+        
+        # Reset index agar datetime jadi kolom biasa, lalu set kembali
+        stock = stock.reset_index()
+        stock['Date'] = pd.to_datetime(stock['Date'])
+        stock = stock.set_index('Date')
+        
+        # Konversi semua kolom numeric ke float untuk mencegah error
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            if col in stock.columns:
+                stock[col] = pd.to_numeric(stock[col], errors='coerce')
+        
+        # Drop rows dengan NaN
+        stock = stock.dropna()
+        
         return stock
     except Exception as e:
         st.error(f"Error downloading data: {e}")
@@ -101,7 +119,8 @@ def get_stock_data(ticker, period="2y"):
 # Fungsi untuk create features
 def create_features(df, lookback=60):
     """Membuat features untuk training model"""
-    data = df['Close'].values.reshape(-1, 1)
+    # Pastikan Close adalah float
+    data = df['Close'].astype(float).values.reshape(-1, 1)
     scaler = MinMaxScaler()
     scaled_data = scaler.fit_transform(data)
     
@@ -114,6 +133,9 @@ def create_features(df, lookback=60):
     
     # Tambahkan features tambahan
     df_features = df.copy()
+    df_features['Close'] = df_features['Close'].astype(float)
+    df_features['Volume'] = df_features['Volume'].astype(float)
+    
     df_features['MA_5'] = df_features['Close'].rolling(window=5).mean()
     df_features['MA_20'] = df_features['Close'].rolling(window=20).mean()
     df_features['MA_50'] = df_features['Close'].rolling(window=50).mean()
@@ -126,16 +148,19 @@ def create_features(df, lookback=60):
     extra_features = []
     for i in range(lookback, len(df_features)):
         row = df_features.iloc[i]
+        close_val = float(row['Close'])
+        volume_val = float(row['Volume']) if row['Volume'] > 0 else 1.0
+        
         extra_features.append([
-            row['MA_5'] / row['Close'] if pd.notna(row['MA_5']) else 0,
-            row['MA_20'] / row['Close'] if pd.notna(row['MA_20']) else 0,
-            row['MA_50'] / row['Close'] if pd.notna(row['MA_50']) else 0,
-            row['RSI'] / 100 if pd.notna(row['RSI']) else 0.5,
-            row['Volume_MA'] / row['Volume'] if pd.notna(row['Volume_MA']) and row['Volume'] > 0 else 1,
-            row['Volatility'] / row['Close'] if pd.notna(row['Volatility']) else 0
+            float(row['MA_5']) / close_val if pd.notna(row['MA_5']) and close_val > 0 else 0.0,
+            float(row['MA_20']) / close_val if pd.notna(row['MA_20']) and close_val > 0 else 0.0,
+            float(row['MA_50']) / close_val if pd.notna(row['MA_50']) and close_val > 0 else 0.0,
+            float(row['RSI']) / 100 if pd.notna(row['RSI']) else 0.5,
+            float(row['Volume_MA']) / volume_val if pd.notna(row['Volume_MA']) else 1.0,
+            float(row['Volatility']) / close_val if pd.notna(row['Volatility']) and close_val > 0 else 0.0
         ])
     
-    extra_features = np.array(extra_features)
+    extra_features = np.array(extra_features, dtype=np.float64)
     X_combined = np.concatenate([X, extra_features], axis=1)
     
     return X_combined, y, scaler
@@ -334,14 +359,15 @@ if st.button("🔍 MULAI PREDIKSI", type="primary", use_container_width=True):
         
         fig = go.Figure()
         
-        last_90_days = data.tail(90)
+        last_90_days = data.tail(90).copy()
         
+        # Konversi ke float untuk plotting
         fig.add_trace(go.Candlestick(
             x=last_90_days.index,
-            open=last_90_days['Open'],
-            high=last_90_days['High'],
-            low=last_90_days['Low'],
-            close=last_90_days['Close'],
+            open=last_90_days['Open'].astype(float),
+            high=last_90_days['High'].astype(float),
+            low=last_90_days['Low'].astype(float),
+            close=last_90_days['Close'].astype(float),
             name='OHLC'
         ))
         
@@ -372,20 +398,31 @@ if st.button("🔍 MULAI PREDIKSI", type="primary", use_container_width=True):
         
         # Siapkan last sequence untuk prediksi
         lookback = 60
-        last_data = data['Close'].values[-lookback:].reshape(-1, 1)
+        last_data = data['Close'].astype(float).values[-lookback:].reshape(-1, 1)
         scaled_last = scaler.transform(last_data).flatten()
         
         # Tambahkan extra features untuk last sequence
         last_row = data.iloc[-1]
+        close_val = float(last_row['Close'])
+        volume_val = float(last_row['Volume']) if float(last_row['Volume']) > 0 else 1.0
+        
+        ma5 = float(data['Close'].rolling(5).mean().iloc[-1])
+        ma20 = float(data['Close'].rolling(20).mean().iloc[-1])
+        ma50 = float(data['Close'].rolling(50).mean().iloc[-1])
+        rsi_val = float(calculate_rsi(data['Close']).iloc[-1])
+        vol_ma = float(data['Volume'].rolling(20).mean().iloc[-1])
+        std_val = float(data['Close'].rolling(20).std().iloc[-1])
+        
         extra_feats = [
-            data['Close'].rolling(5).mean().iloc[-1] / last_row['Close'],
-            data['Close'].rolling(20).mean().iloc[-1] / last_row['Close'],
-            data['Close'].rolling(50).mean().iloc[-1] / last_row['Close'],
-            calculate_rsi(data['Close']).iloc[-1] / 100,
-            data['Volume'].rolling(20).mean().iloc[-1] / last_row['Volume'] if last_row['Volume'] > 0 else 1,
-            data['Close'].rolling(20).std().iloc[-1] / last_row['Close']
+            ma5 / close_val if not np.isnan(ma5) and close_val > 0 else 0.0,
+            ma20 / close_val if not np.isnan(ma20) and close_val > 0 else 0.0,
+            ma50 / close_val if not np.isnan(ma50) and close_val > 0 else 0.0,
+            rsi_val / 100 if not np.isnan(rsi_val) else 0.5,
+            vol_ma / volume_val if not np.isnan(vol_ma) else 1.0,
+            std_val / close_val if not np.isnan(std_val) and close_val > 0 else 0.0
         ]
         
+        extra_feats = np.array(extra_feats, dtype=np.float64)
         last_sequence = np.concatenate([scaled_last, extra_feats])
         
         status_text.text("Membuat prediksi...")
@@ -453,7 +490,7 @@ if st.button("🔍 MULAI PREDIKSI", type="primary", use_container_width=True):
         fig2 = go.Figure()
         
         # Tambahkan harga historis (30 hari terakhir)
-        historical = data['Close'].tail(30)
+        historical = data['Close'].tail(30).astype(float)
         fig2.add_trace(go.Scatter(
             x=historical.index,
             y=historical.values,
@@ -467,7 +504,7 @@ if st.button("🔍 MULAI PREDIKSI", type="primary", use_container_width=True):
         for i, (model_name, forecast) in enumerate(predictions.items()):
             fig2.add_trace(go.Scatter(
                 x=forecast_dates,
-                y=forecast,
+                y=forecast.astype(float),
                 mode='lines+markers',
                 name=f'{model_name} ({accuracies[model_name]:.1f}%)',
                 line=dict(color=colors[i % len(colors)], width=2, dash='dash')
